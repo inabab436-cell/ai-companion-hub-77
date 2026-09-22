@@ -79,6 +79,8 @@ function getCurrentPosition(): Promise<GeolocationPosition> {
 }
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+/** How many images one message may carry (mirrors the server-side cap). */
+const MAX_ATTACHMENTS = 6;
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -162,7 +164,7 @@ function ChatPage() {
   const [input, setInput] = useState("");
   const [productsOpen, setProductsOpen] = useState(false);
   const [sending, setSending] = useState(false);
-  const [pendingFile, setPendingFile] = useState<{ file: File; preview: string } | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<{ file: File; preview: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -251,24 +253,47 @@ function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  function pickFile(file: File | null | undefined) {
+  function pickFiles(files: FileList | null | undefined) {
     setUploadErr(null);
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setUploadErr("الصور فقط مسموح بها.");
-      return;
+    const list = Array.from(files ?? []);
+    if (list.length === 0) return;
+    const accepted: { file: File; preview: string }[] = [];
+    let err: string | null = null;
+    for (const file of list) {
+      if (!file.type.startsWith("image/")) {
+        err = "الصور فقط مسموح بها.";
+        continue;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        err = "حجم الصورة يتجاوز 8 ميجابايت.";
+        continue;
+      }
+      accepted.push({ file, preview: URL.createObjectURL(file) });
     }
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      setUploadErr("حجم الصورة يتجاوز 8 ميجابايت.");
-      return;
-    }
-    setPendingFile({ file, preview: URL.createObjectURL(file) });
+    setPendingFiles((prev) => {
+      const room = MAX_ATTACHMENTS - prev.length;
+      if (accepted.length > room) err = `يمكن إرسال ${MAX_ATTACHMENTS} صور كحد أقصى في الرسالة.`;
+      const extra = accepted.slice(0, Math.max(0, room));
+      for (const drop of accepted.slice(extra.length)) URL.revokeObjectURL(drop.preview);
+      return [...prev, ...extra];
+    });
+    if (err) setUploadErr(err);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function clearPendingFile() {
-    setPendingFile((prev) => {
-      if (prev) URL.revokeObjectURL(prev.preview);
-      return null;
+  function removePendingFile(index: number) {
+    setPendingFiles((prev) => {
+      const target = prev[index];
+      if (target) URL.revokeObjectURL(target.preview);
+      return prev.filter((_, i) => i !== index);
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function clearPendingFiles() {
+    setPendingFiles((prev) => {
+      for (const p of prev) URL.revokeObjectURL(p.preview);
+      return [];
     });
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -276,27 +301,32 @@ function ChatPage() {
   async function send() {
     if (!callEdge || !visitorId || !merchantId) return;
     const text = input.trim();
-    const attaching = pendingFile;
-    if (!text && !attaching) return;
+    const attaching = pendingFiles;
+    if (!text && attaching.length === 0) return;
 
     setUploadErr(null);
     setInput("");
     setSending(true);
 
     let attachments: ChatAttachment[] | undefined;
-    if (attaching) {
+    if (attaching.length > 0) {
       setUploading(true);
       try {
-        const dataUrl = await readFileAsDataUrl(attaching.file);
-        const uploaded = await uploadChatImage({
-          data: {
-            merchantId,
-            conversationId: conversationId ?? null,
-            fileName: attaching.file.name,
-            dataUrl,
-          },
-        });
-        attachments = [uploaded];
+        const uploaded: ChatAttachment[] = [];
+        for (const item of attaching) {
+          const dataUrl = await readFileAsDataUrl(item.file);
+          uploaded.push(
+            await uploadChatImage({
+              data: {
+                merchantId,
+                conversationId: conversationId ?? null,
+                fileName: item.file.name,
+                dataUrl,
+              },
+            }),
+          );
+        }
+        attachments = uploaded;
       } catch (e: any) {
         setUploadErr(e?.message || "تعذر رفع الصورة.");
         setInput(text);
@@ -306,8 +336,9 @@ function ChatPage() {
       } finally {
         setUploading(false);
       }
-      clearPendingFile();
+      clearPendingFiles();
     }
+
 
     // Optimistic user bubble
     setMessages((m) => [...m, {
