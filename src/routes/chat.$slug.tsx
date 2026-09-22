@@ -510,27 +510,26 @@ function ChatPage() {
 
         {loggedIn && (
         <div className="sticky bottom-0 -mx-4 mt-2 border-t border-border bg-background/90 px-4 py-3 backdrop-blur-xl">
-          {pendingFile && (
-            <div className="mb-2 flex items-center gap-2 rounded-2xl border border-border bg-secondary/60 p-2">
-              <img
-                src={pendingFile.preview}
-                alt="معاينة الصورة المرفقة"
-                className="h-14 w-14 rounded-xl object-cover"
-              />
-              <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {pendingFile.file.name}
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-                onClick={clearPendingFile}
-                disabled={uploading}
-                aria-label="إزالة الصورة"
-              >
-                <X className="h-4 w-4" />
-              </Button>
+          {pendingFiles.length > 0 && (
+            <div className="hub-scroll-x mb-2 flex items-center gap-2">
+              {pendingFiles.map((p, i) => (
+                <div key={`${p.file.name}-${i}`} className="relative shrink-0">
+                  <img
+                    src={p.preview}
+                    alt="معاينة الصورة المرفقة"
+                    className="h-16 w-16 rounded-xl object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePendingFile(i)}
+                    disabled={uploading}
+                    aria-label="إزالة الصورة"
+                    className="absolute -left-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-foreground/70 text-background"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
           {uploadErr && (
