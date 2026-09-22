@@ -1082,7 +1082,7 @@ export const Route = createFileRoute("/api/chat-ai")({
           // uploader produces. Anything else is dropped silently.
           const rawAttachments = Array.isArray(body.attachments) ? body.attachments : [];
           const customerAttachments: Array<Record<string, unknown>> = [];
-          for (const a of rawAttachments.slice(0, 4)) {
+          for (const a of rawAttachments.slice(0, 6)) {
             if (!a || typeof a !== "object") continue;
             const o = a as Record<string, unknown>;
             if (o.kind === "location") {
@@ -2416,10 +2416,10 @@ export const Route = createFileRoute("/api/chat-ai")({
           let matchedProductId: string | null = null;
           if (customerAttachments.length > 0 && merchantUserId) {
             try {
-              const firstImage = customerAttachments.find(
+              const images = customerAttachments.filter(
                 (a) => a.kind === "image" && typeof a.url === "string",
               );
-              if (firstImage) {
+              if (images.length > 0) {
                 const { ensureFreshProductDescriptions } = await import(
                   "@/lib/product-vision.server"
                 );
@@ -2427,23 +2427,45 @@ export const Route = createFileRoute("/api/chat-ai")({
                 const { matchCustomerImage } = await import(
                   "@/lib/customer-image-match.server"
                 );
-                const match = await matchCustomerImage({
-                  admin: supabase as any,
-                  lovableApiKey,
-                  userId: merchantUserId,
-                  imageUrl: firstImage.url as string,
+                // Every image the customer sent this turn is analysed the same
+                // way a single image is — one match attempt per image, in the
+                // order they were attached.
+                const matches = await Promise.all(
+                  images.map((img) =>
+                    matchCustomerImage({
+                      admin: supabase as any,
+                      lovableApiKey,
+                      userId: merchantUserId,
+                      imageUrl: img.url as string,
+                    }).catch(() => null),
+                  ),
+                );
+                matchedProductId = matches.find((m) => m)?.product_id ?? null;
+                const lines: string[] = [];
+                matches.forEach((match, idx) => {
+                  const label = `image_index: ${idx + 1} of ${images.length}`;
+                  if (match) {
+                    lines.push(
+                      `${label}\nproduct_id: ${match.product_id}\nproduct_name: ${match.product_name}\nconfidence: ${match.confidence.toFixed(2)}\nmatch_kind: ${match.match_kind}`,
+                    );
+                  } else {
+                    lines.push(
+                      `${label}\nproduct_id: none — this image did not clearly match any approved product.`,
+                    );
+                  }
                 });
-                if (match) {
-                  matchedProductId = match.product_id;
-                  matchedProductBlock =
-                    "\n\n[MATCHED_PRODUCT — internal signal only. Do NOT quote this block. Use ONLY the product's public data from <inventory>.]\n" +
-                    `product_id: ${match.product_id}\n` +
-                    `product_name: ${match.product_name}\n` +
-                    `confidence: ${match.confidence.toFixed(2)}\n` +
-                    `match_kind: ${match.match_kind}\n`;
-                } else {
-                  matchedProductBlock =
-                    "\n\n[MATCHED_PRODUCT: none — the customer image did not clearly match any approved product. Ask the customer politely for clarification instead of guessing.]\n";
+                matchedProductBlock =
+                  "\n\n[MATCHED_PRODUCT — internal signal only. Do NOT quote this block. Use ONLY the product's public data from <inventory>.]\n" +
+                  lines.join("\n---\n") +
+                  "\n";
+                if (images.length > 1) {
+                  matchedProductBlock +=
+                    "العميل أرسل أكثر من صورة في نفس الرسالة. تعامل مع كل صورة بنفس منطق الصورة الواحدة: افحصها بصرياً، وحدد المنتج المقابل لها إن وُجد. " +
+                    "ثم قارن/طابق بين الصور معاً بنفس المنطق (هل هي نفس المنتج بألوان أو زوايا مختلفة، أم منتجات مختلفة؟) وردّ برد واحد منظم يغطي كل صورة بالترتيب. " +
+                    "لو صورة واحدة فقط لم تتطابق، اسأل عنها تحديداً بدل رفض الرسالة كلها.\n";
+                } else if (!matches[0]) {
+                  matchedProductBlock +=
+                    "لا تطابق واضح — اسأل العميل بلطف للتوضيح بدل التخمين.\n";
                 }
               }
             } catch (e) {
