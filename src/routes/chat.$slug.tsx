@@ -579,8 +579,9 @@ function ChatPage() {
               ref={fileInputRef}
               type="file"
               accept="image/*"
+              multiple
               className="hidden"
-              onChange={(e) => pickFile(e.target.files?.[0])}
+              onChange={(e) => pickFiles(e.target.files)}
             />
             <Button
               type="button"
@@ -588,9 +589,9 @@ function ChatPage() {
               size="icon"
               className="h-11 w-11 shrink-0 rounded-full"
               onClick={() => fileInputRef.current?.click()}
-              disabled={disabled || uploading}
-              aria-label="إرفاق صورة"
-              title="إرفاق صورة"
+              disabled={disabled || uploading || pendingFiles.length >= MAX_ATTACHMENTS}
+              aria-label="إرفاق صور"
+              title="إرفاق صور"
             >
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
             </Button>
@@ -611,7 +612,7 @@ function ChatPage() {
             <Button
               onClick={send}
               size="icon"
-              disabled={disabled || uploading || (!input.trim() && !pendingFile)}
+              disabled={disabled || uploading || (!input.trim() && pendingFiles.length === 0)}
               className="h-11 w-11 shrink-0 rounded-full"
               aria-label="إرسال"
             >
